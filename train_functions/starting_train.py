@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
+writer = SummaryWriter()
 
-
-def starting_train(train_dataset, val_dataset, model, hyperparameters, n_eval):
+def starting_train(train_dataset, val_dataset, model, hyperparameters, n_eval, device):
     """
     Trains and evaluates a model.
 
@@ -30,29 +31,35 @@ def starting_train(train_dataset, val_dataset, model, hyperparameters, n_eval):
     # Initalize optimizer (for gradient descent) and loss function
     optimizer = optim.Adam(model.parameters())
     loss_fn = nn.CrossEntropyLoss()
-
-    step = 0
+    
+    model.to(device)
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1} of {epochs}")
-
         # Loop over each batch in the dataset
-        for batch in tqdm(train_loader):
+        for step, (x, y) in tqdm(enumerate(train_loader)):
             # TODO: Backpropagation and gradient descent
-
+            x = x.to(device)
+            y = y.to(device)
+            logits = model(x)
+            loss = loss_fn(logits, y)
+            loss.backward()
+            optimizer.step()
             # Periodically evaluate our model + log to Tensorboard
             if step % n_eval == 0:
                 # TODO:
                 # Compute training loss and accuracy.
                 # Log the results to Tensorboard.
-
+                writer.add_scalar("Loss", loss, step)
+                acc = compute_accuracy(logits, y)
+                writer.add_scalar("Accuracy", acc, step)
                 # TODO:
                 # Compute validation loss and accuracy.
                 # Log the results to Tensorboard.
                 # Don't forget to turn off gradient calculations!
-                evaluate(val_loader, model, loss_fn)
-
-            step += 1
-
+                dev_loss, dev_acc = evaluate(val_loader, model, loss_fn, device)
+                writer.add_scalar("Dev Loss", dev_loss, step)
+                writer.add_scalar("Dev Acc", dev_acc, step)
+                writer.flush()
         print()
 
 
@@ -68,15 +75,29 @@ def compute_accuracy(outputs, labels):
         0.75
     """
 
-    n_correct = (torch.round(outputs) == labels).sum().item()
+    n_correct = (torch.argmax(outputs, dim=-1) == labels).sum().item()
     n_total = len(outputs)
     return n_correct / n_total
 
 
-def evaluate(val_loader, model, loss_fn):
+def evaluate(val_loader, model, loss_fn, device):
     """
     Computes the loss and accuracy of a model on the validation dataset.
-
+    
     TODO!
     """
-    pass
+    sz = 0
+    total_loss = 0.
+    total_correct = 0.
+    with torch.no_grad():
+        for (x, y) in tqdm(val_loader):
+            # TODO: Backpropagation and gradient descent
+            x = x.to(device)
+            y = y.to(device)
+            logits = model(x)
+            loss = loss_fn(logits, y)
+            batch_sz = x.shape[0]
+            total_loss += loss*batch_sz
+            sz += batch_sz
+            total_correct += (torch.argmax(logits) == y).sum().item()
+    return total_loss / sz, total_correct / sz

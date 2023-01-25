@@ -1,5 +1,8 @@
 __pycache__
-humpback-whale-identification/
+train/
+test/
 .vscode
 
 training_summaries
+train.csv
+test.csv
