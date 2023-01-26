@@ -4,21 +4,28 @@ import numpy as np
 from PIL import Image
 from torchvision import transforms
 
-class TrainDataset(torch.utils.data.Dataset):
+class StartingDataset(torch.utils.data.Dataset):
     """
     Dataset that contains 100000 3x224x224 black images (all zeros).
     """
 
-    def __init__(self):
+    def __init__(self, istrain):
+        self.istrain = istrain
         
         #pandas and readcsv
-        df = pd.read_csv('./data/train/.csv')
-        self.images = df
-        self.label_dict = {id: idx for idx, id in enumerate(set(df['Id']))}
+        df = pd.read_csv('/Users/jef/Desktop/winter 23 projects/whale-project/humpback-whale-identification/train.csv')
+        if self.istrain:
+            self.images = df.truncate(before = len(df)/5).reset_index(drop = True)
+            print(self.images.info())
+        else:
+            self.images = df.truncate(after = len(df)/5).reset_index(drop = True)
+            print(self.images.info())
+
+        self.label_dict = {id: idx for idx, id in enumerate(set(self.images['Id']))}
 
     def __getitem__(self, index):
         #iloc
-        im = Image.open("./data/train/" + self.images.loc[index ,'Image'])
+        im = Image.open('/Users/jef/Desktop/winter 23 projects/whale-project/humpback-whale-identification/train/' + self.images.loc[index ,'Image'])
         im = im.resize((224, 224))
         # im.show()
         converter = transforms.ToTensor()
@@ -30,4 +37,4 @@ class TrainDataset(torch.utils.data.Dataset):
         return inputs, label
 
     def __len__(self):
-        return 10000
+        return len(self.images)

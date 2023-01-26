@@ -1,7 +1,6 @@
-import os
 import torch
 import constants
-from data.datasets import TrainDataset
+from data.datasets import StartingDataset
 from networks.StartingNetwork import StartingNetwork
 from train_functions.starting_train import starting_train
 
@@ -17,8 +16,10 @@ def main():
     print("Batch size:", constants.BATCH_SIZE)
 
     # Initalize dataset and model. Then train the model!
-    train_dataset = TrainDataset()
-    val_dataset = TrainDataset()
+    train_dataset = StartingDataset(True)
+
+    val_dataset = StartingDataset(False)
+
     model = StartingNetwork()
     starting_train(
         train_dataset=train_dataset,
