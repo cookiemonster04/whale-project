@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np 
 from PIL import Image
 from torchvision import transforms
+import time
 
 class StartingDataset(torch.utils.data.Dataset):
     """
@@ -13,7 +14,7 @@ class StartingDataset(torch.utils.data.Dataset):
         self.istrain = istrain
         
         #pandas and readcsv
-        df = pd.read_csv('/Users/jef/Desktop/winter 23 projects/whale-project/humpback-whale-identification/train.csv')
+        df = pd.read_csv('./data/train/.csv')
         if self.istrain:
             self.images = df.truncate(before = len(df)/5).reset_index(drop = True)
             print(self.images.info())
@@ -22,10 +23,15 @@ class StartingDataset(torch.utils.data.Dataset):
             print(self.images.info())
 
         self.label_dict = {id: idx for idx, id in enumerate(set(self.images['Id']))}
+        self.transformations = transforms.RandomApply([transforms.Grayscale(3), transforms.RandomCrop((224,224)),
+                           transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip(),
+                           transforms.GaussianBlur(5)], p=0.3)
+        self.time_taken = 0.
 
     def __getitem__(self, index):
         #iloc
-        im = Image.open('/Users/jef/Desktop/winter 23 projects/whale-project/humpback-whale-identification/train/' + self.images.loc[index ,'Image'])
+        start_time = time.perf_counter()
+        im = Image.open('./data/train/' + self.images.loc[index ,'Image'])
         im = im.resize((224, 224))
         # im.show()
         converter = transforms.ToTensor()
@@ -34,7 +40,12 @@ class StartingDataset(torch.utils.data.Dataset):
             inputs = inputs.repeat(3, 1, 1)
         # print(inputs.shape)
         label = self.label_dict[self.images.loc[index, 'Id']]
+        inputs = self.transform(inputs)
+        end_time = time.perf_counter()
+        self.time_taken += end_time-start_time
         return inputs, label
 
+    def transform(self, image):
+        return self.transformations(image)
     def __len__(self):
         return len(self.images)
