@@ -13,7 +13,7 @@ class StartingDataset(torch.utils.data.Dataset):
         self.istrain = istrain
         
         #pandas and readcsv
-        df = pd.read_csv('/Users/jef/Desktop/winter 23 projects/whale-project/humpback-whale-identification/train.csv')
+        df = pd.read_csv('/Users/sreyamuppalla/Desktop/whale-project/data/train/.csv')
         if self.istrain:
             self.images = df.truncate(before = len(df)/5).reset_index(drop = True)
             print(self.images.info())
@@ -25,7 +25,7 @@ class StartingDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         #iloc
-        im = Image.open('/Users/jef/Desktop/winter 23 projects/whale-project/humpback-whale-identification/train/' + self.images.loc[index ,'Image'])
+        im = Image.open('/Users/sreyamuppalla/Desktop/whale-project/data/train/' + self.images.loc[index ,'Image'])
         im = im.resize((224, 224))
         # im.show()
         converter = transforms.ToTensor()
