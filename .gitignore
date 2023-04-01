@@ -1,8 +1,12 @@
 __pycache__
 train/
 test/
+runs/
+ckpt/
 .vscode
-
+data/*.zip
 training_summaries
 train.csv
 test.csv
+scratch.py
+kaggle_files.txt

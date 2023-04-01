@@ -12,7 +12,7 @@ class StartingNetwork(torch.nn.Module):
         self.resnet = torch.nn.Sequential(*(list(model.children())[:-1]))
         self.flatten = nn.Flatten()
         self.fc1 = nn.Linear(512, 64)
-        self.fc2 = nn.Linear(64, 25361)
+        self.fc2 = nn.Linear(64, 5005)
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=-1)
     def forward(self, x):

@@ -44,6 +44,7 @@ def starting_train(train_dataset, val_dataset, model, hyperparameters, n_eval, d
             loss = loss_fn(logits, y)
             loss.backward()
             optimizer.step()
+            optimizer.zero_grad()
             print('Get item time:', train_dataset.time_taken)
             # Periodically evaluate our model + log to Tensorboard
             if step % n_eval == 0:

@@ -18,7 +18,7 @@ class StartingNetwork(torch.nn.Module):
         self.conv4 = nn.Conv2d(8, 32, 3, 1, padding='same') # 8 x 14 x 14 -> 32 x 14 x 14
         self.pool4 = nn.MaxPool2d(2, 2) # 32 x 14 x 14 -> 32 x 7 x 7
         self.fc1 = nn.Linear(32*7*7, 64)
-        self.fc2 = nn.Linear(64, 25361)
+        self.fc2 = nn.Linear(64, 5005)
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=-1)
     def forward(self, x):

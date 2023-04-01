@@ -1,3 +1,12 @@
-EPOCHS = 2
+EPOCHS = 40
 BATCH_SIZE = 32
-N_EVAL = 1
+N_EVAL = 5
+SIAMESE = True
+# TRAIN_PATH = "/content/data/train"
+TRAIN_PATH = "/kaggle/input/whale-dataset"
+# TRAIN_PATH = "./data/train"
+# CKPT_PATH = "./ckpt"
+CKPT_PATH = "./"
+LOAD_FILE = "2023_Apr_01-00_04_31_stage2_2023_Mar_31-23_57_28"
+STAGE = 3
+SAVE_STAGES = set((1, 2, 3))
