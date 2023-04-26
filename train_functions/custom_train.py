@@ -7,8 +7,9 @@ from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter()
 from datetime import datetime
 import os
+import math
 
-def siamese_train(encode_train, pred_train, pred_val, model, hyperparameters, n_eval, device):
+def siamese_train(encode_easy, encode_hard, pred_train, pred_val, model, hyperparameters, n_eval, device):
     """
     Trains and evaluates a model.
 
@@ -20,15 +21,30 @@ def siamese_train(encode_train, pred_train, pred_val, model, hyperparameters, n_
         n_eval:          Interval at which we evaluate our model.
     """
 
-    # Get keyword arguments
+    start_epoch = hyperparameters["start_epoch"] if 'start_epoch' in hyperparameters else None
+    easy_epochs, hard_epochs = hyperparameters["easy_epochs"], hyperparameters["hard_epochs"]
+    warmup_steps, final_steps = hyperparameters["warmup"], hyperparameters["final"]
     batch_size, epochs = hyperparameters["batch_size"], hyperparameters["epochs"]
     start_stage, saves = hyperparameters["stage"], hyperparameters["save_stages"]
     start_time = hyperparameters["start_time"]
     save_path = hyperparameters["save_path"]
+    save_int = hyperparameters["save_int"]
 
-    # Initialize dataloaders
-    etl = torch.utils.data.DataLoader(
-        encode_train, batch_size=batch_size, shuffle=True
+    if start_stage == 1:
+        easy_epochs -= start_epoch
+    elif start_stage == 2:
+        hard_epochs -= start_epoch
+    elif start_stage == 3:
+        assert(start_epoch == None or start_epoch == 0)
+    elif start_stage == 4:
+        epochs -= start_epoch
+    else:
+        assert(start_epoch == None)
+    eel = torch.utils.data.DataLoader(
+        encode_easy, batch_size=batch_size, shuffle=True
+    )
+    ehl = torch.utils.data.DataLoader(
+        encode_hard, batch_size=batch_size, shuffle=True
     )
     ptl = torch.utils.data.DataLoader(
         pred_train, batch_size=batch_size, shuffle=True
@@ -36,18 +52,28 @@ def siamese_train(encode_train, pred_train, pred_val, model, hyperparameters, n_
     pvl = torch.utils.data.DataLoader(
         pred_val, batch_size=batch_size
     )
+    embed_lr = 3e-3
+    # optimizer = optim.Adam(model.parameters(), lr=embed_lr)
+    optimizer = optim.Adam(model.fc.parameters() if model.pretrain else model.parameters(), lr=embed_lr)
+    loss_fn = model.loss
+    model = model.to(device)
+    
+    def update_lr():
+        if model.steps.item() < warmup_steps:
+            lr_mult = model.steps.item() / warmup_steps
+        else:
+            progress = (model.steps.item() - warmup_steps) / max(1, final_steps - warmup_steps)
+            lr_mult = max(0.1, 0.5*(1.0+math.cos(math.pi * progress)))
+        cur_lr = embed_lr * lr_mult
+        for g in optimizer.param_groups:
+            g['lr'] = cur_lr
 
-    # Initalize optimizer (for gradient descent) and loss function
     if start_stage <= 1:
-        optimizer = optim.Adam(model.parameters())
-        loss_fn = model.loss
-        model = model.to(device)
-        for epoch in range(epochs):
-            print(f"Epoch {epoch + 1} of {epochs}")
-            # Loop over each batch in the dataset
-            pbar = tqdm(enumerate(etl), total=len(etl))
+        for epoch in range(easy_epochs):
+            print(f"Epoch {epoch + 1} of {easy_epochs}")
+            pbar = tqdm(enumerate(eel), total=len(eel))
             for step, (x1, x2, x3) in pbar:
-                # TODO: Backpropagation and gradient descent
+                update_lr()
                 x1 = x1.to(device); v1 = model(x1)
                 x2 = x2.to(device); v2 = model(x2)
                 x3 = x3.to(device); v3 = model(x3)
@@ -55,39 +81,65 @@ def siamese_train(encode_train, pred_train, pred_val, model, hyperparameters, n_
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad()
-                pbar.set_description(f"iter {step} Train encode loss: {loss}")
+                model.steps += 1
+                pbar.set_description(f"iter {step} Easy encode loss: {loss}")
                 writer.add_scalar("Encode Loss", loss, step)
                 writer.flush()
             print()
         if 1 in saves:
             dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
             torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage1_{start_time}.state'))
-
-    loss_fn = nn.CrossEntropyLoss()
     if start_stage <= 2:
+        for epoch in range(hard_epochs):
+            encode_hard.gen_matrix(model)
+            # encode_hard.gen_with_prof(model)
+            print(f"Epoch {epoch + 1} of {hard_epochs}")
+            pbar = tqdm(enumerate(ehl), total=len(ehl))
+            for step, (x1, x2, x3, i1, i2, i3) in pbar:
+                update_lr()
+                x1 = x1.to(device); v1 = model(x1); encode_hard.embed_matrix[i1] = v1
+                x2 = x2.to(device); v2 = model(x2); encode_hard.embed_matrix[i2] = v2
+                x3 = x3.to(device); v3 = model(x3); encode_hard.embed_matrix[i3] = v3
+                loss = loss_fn(v1, v2, v3)
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
+                model.steps += 1
+                pbar.set_description(f"iter {step} Hard encode loss: {loss}")
+                writer.add_scalar("Encode Loss", loss, step)
+                writer.flush()
+            print()
+            if 2 in saves and save_int[2] != 0 and (epoch+1) % save_int[2] == 0:
+                dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
+                torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage2_e{epoch+1}_{start_time}.state'))
+        if 2 in saves:
+            dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
+            torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage2_{start_time}.state'))
+    loss_fn = nn.CrossEntropyLoss()
+    if start_stage <= 3:
         model.init_classify_params()
         model = model.to(device)
         with torch.no_grad():
-            for step, (x, y) in tqdm(enumerate(ptl)):
+            for step, (x, y) in tqdm(enumerate(ptl), total=len(ptl)):
                 x = x.to(device)
                 model.init_classify(x, y)
-            for step, (x, y) in tqdm(enumerate(pvl)):
+            print()
+            for step, (x, y) in tqdm(enumerate(pvl), total=len(pvl)):
                 x = x.to(device)
                 model.init_classify(x, y)
+            print()
             model.norm_embed()
-        if 2 in saves:
+        if 3 in saves:
             dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
-            torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage2_{start_time}'))
-    if start_stage >= 3:
+            torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage3_{start_time}'))
+    if start_stage >= 4:
         model = model.to(device)
-    if start_stage <= 3:
+    if start_stage <= 4:
         optimizer = optim.Adam(model.parameters())
         for epoch in range(epochs):
             print(f"Epoch {epoch + 1} of {epochs}")
-            # Loop over each batch in the dataset
             pbar = tqdm(enumerate(ptl), total=len(ptl))
             for step, (x, y) in pbar:
-                # TODO: Backpropagation and gradient descent
                 x = x.to(device)
                 y = y.to(device)
                 logits = model.classify(x)
@@ -100,28 +152,22 @@ def siamese_train(encode_train, pred_train, pred_val, model, hyperparameters, n_
                 optimizer.step()
                 optimizer.zero_grad()
                 pbar.set_description(f"iter {step} Train predict loss: {loss}")
-                # Periodically evaluate our model + log to Tensorboard
+            print()
             if (epoch+1) % n_eval == 0 or (epoch+1) == epochs:# (epoch+1) == len(ptl):
-                # TODO:
-                # Compute training loss and accuracy.
-                # Log the results to Tensorboard.
                 writer.add_scalar("Predict Loss", loss, step+1)
                 acc = compute_accuracy(logits, y)
                 writer.add_scalar("Predict Accuracy", acc, step+1)
                 print(f"Predict train acc: {acc}")
-                # TODO:
-                # Compute validation loss and accuracy.
-                # Log the results to Tensorboard.
-                # Don't forget to turn off gradient calculations!
+                model.eval()
                 dev_loss, dev_acc = pred_evaluate(pvl, model, loss_fn, device)
+                model.train()
                 writer.add_scalar("Predict Dev Loss", dev_loss, step+1)
                 writer.add_scalar("Predict Dev Acc", dev_acc, step+1)
                 print(f"Predict dev acc: {dev_acc}")
                 writer.flush()
-            print()
-        if 3 in saves:
+        if 4 in saves:
             dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
-            torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage3_{start_time}'))
+            torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage4_{start_time}'))
 
 def compute_accuracy(outputs, labels):
     """
@@ -162,4 +208,5 @@ def pred_evaluate(val_loader, model, loss_fn, device):
             total_loss += loss*batch_sz
             sz += batch_sz
             total_correct += (ans == y).sum().item()
+        print()
     return total_loss / sz, total_correct / sz
