@@ -16,15 +16,23 @@ class SiameseNetwork(torch.nn.Module):
         self.steps = nn.Parameter(torch.zeros(1), requires_grad=False)
         if pretrain:
             pmodel = convnext_tiny(weights='DEFAULT')
-            self.model = nn.Sequential(*(
-                list(pmodel.children())[:-1]
-                ), 
-                *(list(( 
-                        list(pmodel.children())[-1].children()
-                        ))[:-1]))
+            # self.model = nn.Sequential(*(
+            #     list(pmodel.children())[:-1]
+            #     ), 
+            #     *(list(( 
+            #             list(pmodel.children())[-1].children()
+            #             ))[:-1]),
+            #     nn.Linear(768, 500))
+            # self.model = nn.Sequential(*list(pmodel.features.children()), 
+            #     *(list(pmodel.classifier[:-1])),
+            #     nn.Linear(768, 500))
+            self.model = nn.Sequential(*list(pmodel.features.children()),
+                pmodel.avgpool,
+                *(list(pmodel.classifier)[:-1]), nn.Linear(768, 500))
             for param in self.model.parameters():
                 param.requires_grad = False
-            self.fc = nn.Linear(768, 500)
+            for param in self.model[7:].parameters():
+                param.requires_grad = True
         else:
             self.flatten = nn.Flatten()
             self.conv1 = nn.Conv2d(3, 8, 8, 2, padding=(3,3)) # 3 x 224 x 224 -> 8 x 112 x 112
@@ -45,7 +53,6 @@ class SiameseNetwork(torch.nn.Module):
     def forward(self, x):
         if self.pretrain:
             x = self.model(x)
-            x = self.fc(x)
         else:
             x = self.conv1(x)
             x = self.pool1(x)
@@ -58,7 +65,7 @@ class SiameseNetwork(torch.nn.Module):
             x = self.flatten(x)
             x = self.relu(self.fc1(x))
             x = self.fc2(x)
-        x = x / torch.linalg.vector_norm(x)
+        x = torch.nn.functional.normalize(x)
         return x
     
     def init_classify(self, x, y):
@@ -66,8 +73,7 @@ class SiameseNetwork(torch.nn.Module):
         x = x[indices]; y = y[indices]
         embed = self.forward(x)
         for yv, ev in zip(y, embed):
-            self.embed_matrix[yv] += ev / torch.linalg.vector_norm(ev)
-            # self.embed_count[yv] += 1
+            self.embed_matrix[yv] += ev
     
     def init_classify_params(self):
         self.embed_matrix = nn.Parameter(torch.zeros([5004, 500], requires_grad=True))
@@ -76,14 +82,31 @@ class SiameseNetwork(torch.nn.Module):
         self.softmax = nn.Softmax(dim=0)
     
     def norm_embed(self):
-        self.embed_matrix /= torch.linalg.vector_norm(self.embed_matrix, dim=0)
-        # print(self.embed_matrix.size())
-        assert(torch.isnan(self.embed_matrix).sum() == 0)
+        with torch.no_grad():
+            self.embed_matrix /= torch.linalg.vector_norm(self.embed_matrix, dim=1).unsqueeze(1)
+            assert(torch.isnan(self.embed_matrix).sum() == 0)
         
+    def test_classify(self, x, y):
+        # return
+        indices = [i for i, yv in enumerate(y) if yv < 5004]
+        x = x[indices]; y = y[indices]
+        embed = self.forward(x)
+        for yv, ev in zip(y, embed):
+            out = self.embed_matrix @ ev.T
+            print(torch.max(out))
+            print(f'Class: {torch.argmax(out)}, Label: {yv}')
+            
     def classify(self, x):
         embed = self.forward(x)
         embed_dist = torch.concat((self.embed_matrix @ embed.T, self.new_thresh.expand(1, embed.size()[0])))
+        v, i = embed_dist.detach().topk(10, dim=0)
+        v = v.T; i = i.T
+        for vi, ii in zip(v, i):
+            for vii, iii in zip(vi, ii):
+                print(f"({vii}, {iii})", end=" ")
+            print()
         logits = self.softmax(embed_dist).T
         # torch.set_printoptions(profile="full")
         # print(logits)
         return logits
+    

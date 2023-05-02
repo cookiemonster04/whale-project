@@ -8,6 +8,8 @@ writer = SummaryWriter()
 from datetime import datetime
 import os
 import math
+# import gc
+# from pytorch_memlab import MemReporter
 
 def siamese_train(encode_easy, encode_hard, pred_train, pred_val, model, hyperparameters, n_eval, device):
     """
@@ -42,10 +44,10 @@ def siamese_train(encode_easy, encode_hard, pred_train, pred_val, model, hyperpa
         assert(start_epoch == None)
     eel = torch.utils.data.DataLoader(
         encode_easy, batch_size=batch_size, shuffle=True
-    )
+    ) if encode_easy is not None else None
     ehl = torch.utils.data.DataLoader(
-        encode_hard, batch_size=batch_size, shuffle=True
-    )
+        encode_hard, batch_size=batch_size, shuffle=False if hasattr(encode_hard, "diff_ordered") and encode_hard.diff_ordered else True
+    ) if encode_hard is not None else None
     ptl = torch.utils.data.DataLoader(
         pred_train, batch_size=batch_size, shuffle=True
     )
@@ -53,12 +55,13 @@ def siamese_train(encode_easy, encode_hard, pred_train, pred_val, model, hyperpa
         pred_val, batch_size=batch_size
     )
     embed_lr = 3e-3
-    # optimizer = optim.Adam(model.parameters(), lr=embed_lr)
-    optimizer = optim.Adam(model.fc.parameters() if model.pretrain else model.parameters(), lr=embed_lr)
+    optimizer = optim.Adam(model.parameters(), lr=embed_lr)
+    # optimizer = optim.Adam(model.fc.parameters() if model.pretrain else model.parameters(), lr=embed_lr)
     loss_fn = model.loss
     model = model.to(device)
     
     def update_lr():
+        return
         if model.steps.item() < warmup_steps:
             lr_mult = model.steps.item() / warmup_steps
         else:
@@ -88,18 +91,24 @@ def siamese_train(encode_easy, encode_hard, pred_train, pred_val, model, hyperpa
             print()
         if 1 in saves:
             dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
-            torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage1_{start_time}.state'))
+            save_name = f'{dt_string}_stage1_{start_time}.state'
+            torch.save(model.state_dict(), os.path.join(save_path, save_name))
+            print(f"Saved: {save_name}")
     if start_stage <= 2:
+        encode_hard.gen_matrix(model)
         for epoch in range(hard_epochs):
-            encode_hard.gen_matrix(model)
-            # encode_hard.gen_with_prof(model)
             print(f"Epoch {epoch + 1} of {hard_epochs}")
             pbar = tqdm(enumerate(ehl), total=len(ehl))
             for step, (x1, x2, x3, i1, i2, i3) in pbar:
                 update_lr()
-                x1 = x1.to(device); v1 = model(x1); encode_hard.embed_matrix[i1] = v1
-                x2 = x2.to(device); v2 = model(x2); encode_hard.embed_matrix[i2] = v2
-                x3 = x3.to(device); v3 = model(x3); encode_hard.embed_matrix[i3] = v3
+                if hasattr(encode_hard, "diff_ordered"):
+                    x1 = x1.to(device); v1 = model(x1)
+                    x2 = x2.to(device); v2 = model(x2)
+                    x3 = x3.to(device); v3 = model(x3)
+                else:
+                    x1 = x1.to(device); v1 = model(x1); encode_hard.embed_matrix[i1] = v1.detach()
+                    x2 = x2.to(device); v2 = model(x2); encode_hard.embed_matrix[i2] = v2.detach()
+                    x3 = x3.to(device); v3 = model(x3); encode_hard.embed_matrix[i3] = v3.detach()
                 loss = loss_fn(v1, v2, v3)
                 loss.backward()
                 optimizer.step()
@@ -108,13 +117,18 @@ def siamese_train(encode_easy, encode_hard, pred_train, pred_val, model, hyperpa
                 pbar.set_description(f"iter {step} Hard encode loss: {loss}")
                 writer.add_scalar("Encode Loss", loss, step)
                 writer.flush()
+                encode_hard.regen_handler(model, loss)
             print()
             if 2 in saves and save_int[2] != 0 and (epoch+1) % save_int[2] == 0:
                 dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
-                torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage2_e{epoch+1}_{start_time}.state'))
+                save_name = f'{dt_string}_stage2_e{epoch+1}_{start_time}.state'
+                torch.save(model.state_dict(), os.path.join(save_path, save_name))
+                print(f"Saved: {save_name}")
         if 2 in saves:
             dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
-            torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage2_{start_time}.state'))
+            save_name = f'{dt_string}_stage2_{start_time}.state'
+            torch.save(model.state_dict(), os.path.join(save_path, save_name))
+            print(f"Saved: {save_name}")
     loss_fn = nn.CrossEntropyLoss()
     if start_stage <= 3:
         model.init_classify_params()
@@ -131,9 +145,22 @@ def siamese_train(encode_easy, encode_hard, pred_train, pred_val, model, hyperpa
             model.norm_embed()
         if 3 in saves:
             dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
-            torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage3_{start_time}'))
+            save_name = f'{dt_string}_stage3_{start_time}.state'
+            torch.save(model.state_dict(), os.path.join(save_path, save_name))
+            print(f"Saved: {save_name}")
     if start_stage >= 4:
         model = model.to(device)
+        with torch.no_grad():
+            model.eval()
+            for step, (x, y) in tqdm(enumerate(ptl), total=len(ptl)):
+                x = x.to(device)
+                model.test_classify(x, y)
+            print()
+            for step, (x, y) in tqdm(enumerate(pvl), total=len(pvl)):
+                x = x.to(device)
+                model.test_classify(x, y)
+            print()
+        return
     if start_stage <= 4:
         optimizer = optim.Adam(model.parameters())
         for epoch in range(epochs):
@@ -141,6 +168,7 @@ def siamese_train(encode_easy, encode_hard, pred_train, pred_val, model, hyperpa
             pbar = tqdm(enumerate(ptl), total=len(ptl))
             for step, (x, y) in pbar:
                 x = x.to(device)
+                print(f"Expected: {y}")
                 y = y.to(device)
                 logits = model.classify(x)
                 torch.set_printoptions(profile="full")
@@ -167,7 +195,9 @@ def siamese_train(encode_easy, encode_hard, pred_train, pred_val, model, hyperpa
                 writer.flush()
         if 4 in saves:
             dt_string = datetime.now().strftime("%Y_%b_%d-%H_%M_%S")
-            torch.save(model.state_dict(), os.path.join(save_path, f'{dt_string}_stage4_{start_time}'))
+            save_name = f'{dt_string}_stage4_{start_time}.state'
+            torch.save(model.state_dict(), os.path.join(save_path, save_name))
+            print(f"Saved: {save_name}")
 
 def compute_accuracy(outputs, labels):
     """
